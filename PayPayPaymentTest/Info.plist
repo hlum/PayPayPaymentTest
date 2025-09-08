@@ -15,5 +15,9 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>paypay</string>
+	</array>
 </dict>
 </plist>
