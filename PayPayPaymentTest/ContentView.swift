@@ -7,24 +7,18 @@
 
 import SwiftUI
 
-struct PayloaderResponse: Decodable {
-    let data: DetailData
-}
 
-struct DetailData: Decodable {
-    let deeplink: String
-    let merchantPaymentId: String
-}
 
 class PayPayPayloader: ObservableObject {
     
-
-    
-    func makePayment() async {
+    func makePayment(amount: String) async {
         do {
-            let paymentURL = try await createPaymentURL()
+            let (paymentURL, merchantPaymentID) = try await BackendAPICaller.shared.createPaymentURL(amount: amount)
             
             if await UIApplication.shared.canOpenURL(paymentURL) {
+                // あとで、支払いが成功したかを確認するため保存しとく
+                MerchantPaymentIDManager.shared.saveMerchantPaymentID(merchantPaymentID)
+                
                 await UIApplication.shared.open(paymentURL, options: [:], completionHandler: nil)
              }
             
@@ -34,79 +28,32 @@ class PayPayPayloader: ObservableObject {
     }
     
     
-    private func createPaymentURL() async throws -> URL {
-        
-        guard let apiKey = loadAPIKey() else {
-            print("Unable to load api key.")
-            throw URLError(.unknown)
-        }
-        
-        var request = URLRequest(url: URL(string: "https://24cm0138.main.jp/paypay/create_payload.php")!)
-        
-        request.httpMethod = "POST"
-        request.allHTTPHeaderFields = ["Authorization": apiKey]
-        
-        var components = URLComponents()
-        components.queryItems = [
-            URLQueryItem(name: "product_name", value: "Test Product"),
-            URLQueryItem(name: "quantity", value: "2"),
-            URLQueryItem(name: "price", value: "100"),
-            URLQueryItem(name: "redirect_url", value: "PayPayPaymentTest://")
-        ]
-        
-        request.httpBody = components.query?.data(using: .utf8)
-
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-                
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            let rawDataString = String(data: data, encoding: .utf8) ?? "(No data)"
-            print(rawDataString)
-            throw URLError(.badServerResponse)
-        }
-        
-        do {
-            let decoder = JSONDecoder()
-            let decodedResponse = try decoder.decode(PayloaderResponse.self, from: data)
-            
-            guard let url = URL(string: decodedResponse.data.deeplink) else {
-                print("Unable to parse URL.")
-                throw URLError(.badURL)
-            }
-            
-            return url
-            
-        } catch {
-            
-            let rawDataString = String(data: data, encoding: .utf8) ?? "(No data)"
-            print(rawDataString)
-            
-            throw URLError(.badServerResponse)
-        }
-    }
-    
-    
-    private func loadAPIKey() -> String? {
-        if let url = Bundle.main.url(forResource: "API_KEY", withExtension: "plist"),
-           let data = try? Data(contentsOf: url),
-           let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-           
-           let key = dict["API_KEY"] as? String {
-            return key
-        }
-        return nil
-    }
+   
 }
 
 struct ContentView: View {
     @StateObject private var payPayPayloader = PayPayPayloader()
+    @State private var amount:String = "100"
+    @Binding var lastPaymentStatus: (merchantID: String, status: String)?
     var body: some View {
         VStack {
+
+            Text("LastPayment merchantID: \(lastPaymentStatus?.merchantID ?? "")")
+            Text("LastPayment status: \(lastPaymentStatus?.status ?? "")")
+            
+            let status = lastPaymentStatus?.status ?? ""
+            
+            Circle()
+                .fill(status == "COMPLETED" ? .green : status == "" ? .gray :.red)
+           
+            
+            TextField("Amount", text: $amount)
+                .keyboardType(.numberPad)
+                .padding()
+            
             Button {
                 Task {
-                    await payPayPayloader.makePayment()
+                    await payPayPayloader.makePayment(amount: amount)
                 }
             } label: {
                 Text("Pay")
@@ -114,9 +61,9 @@ struct ContentView: View {
 
         }
         .padding()
+        .task {
+            self.lastPaymentStatus = await PaymentManager.shared.fetchLastPaymentStatus()
+        }
     }
 }
 
-#Preview {
-    ContentView()
-}
